@@ -5,6 +5,7 @@ from googleapiclient.discovery import build
 from groq import Groq
 import requests
 import io
+import time  # リトライ待機用に追加
 from PIL import Image
 
 # --- 1. ページ設定 ---
@@ -19,17 +20,32 @@ with st.sidebar:
     hf_key = st.text_input("Hugging Face Token", value=st.secrets.get("HF_TOKEN", ""), type="password")
     st.info("※APIキーはStreamlitのSecretsに保存しておくと便利です。")
 
-# --- 画像生成関数 (Hugging Face API) ---
+# --- 3. 【修正版】画像生成関数 (Hugging Face API / リトライ機能付) ---
 def generate_image(prompt, token):
     API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
     headers = {"Authorization": f"Bearer {token}"}
-    try:
-        response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
-        return response.content
-    except:
-        return None
+    
+    # モデルの起動に時間がかかる場合があるため、最大3回リトライ
+    for i in range(3):
+        try:
+            response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
+            
+            if response.status_code == 200:
+                return response.content
+            elif response.status_code == 503:
+                # モデルが読み込み中の場合は20秒待機してリトライ
+                st.warning(f"🎨 AI画像生成モデルを起動中... ({i+1}/3回目: 約20秒待ちます)")
+                time.sleep(20)
+                continue
+            else:
+                st.error(f"画像生成エラー (Status: {response.status_code})")
+                return None
+        except Exception as e:
+            st.error(f"通信エラー: {e}")
+            return None
+    return None
 
-# --- メイン入力エリア ---
+# --- 4. メイン入力エリア ---
 url = st.text_input("分析したいチャンネルURL", placeholder="https://www.youtube.com/@handle")
 
 if st.button("🛰️ 全機能を一括起動"):
@@ -82,7 +98,7 @@ if st.button("🛰️ 全機能を一括起動"):
                 v_id = v_ids[0] # 最新動画ID
 
             # --- 2. 競合リサーチ ---
-            with st.spinner("🛰️ 競合をスパイ中..."):
+            with st.spinner("🛰️ 競合情報を収集中..."):
                 keyword = df['タイトル'].iloc[0][:15]
                 search_res = youtube.search().list(q=keyword, type="channel", part="snippet", maxResults=2).execute()
                 comp_info = [f"{item['snippet']['title']}" for item in search_res.get('items', [])]
@@ -139,9 +155,12 @@ if st.button("🛰️ 全機能を一括起動"):
             
             with t3:
                 if image_bytes:
-                    st.image(Image.open(io.BytesIO(image_bytes)), caption="AI生成サムネイル案")
+                    try:
+                        st.image(Image.open(io.BytesIO(image_bytes)), caption="AI生成サムネイル案")
+                    except:
+                        st.error("データの読み込みに失敗しました。もう一度実行してみてください。")
                 else:
-                    st.warning("画像の生成に失敗しました。トークンを確認するか時間を置いて試してください。")
+                    st.warning("画像の生成に時間がかかっています。しばらく待ってから再度「一括起動」を押してください。")
 
             with t4:
                 st.dataframe(df)
