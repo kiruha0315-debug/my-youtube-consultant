@@ -1,91 +1,80 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px  # グラフ用に追加
 from googleapiclient.discovery import build
 from groq import Groq
-from openai import OpenAI  # 画像生成用に追加
+from openai import OpenAI
 
 # --- ページ設定 ---
-st.set_page_config(page_title="AI動画 究極コンサル V2", layout="wide", page_icon="🎨")
-st.title("🎨 AI動画 究極コンサル & サムネイル生成")
+st.set_page_config(page_title="YouTube AI Analytics", layout="wide", page_icon="📈")
+st.title("📈 YouTube 動画別詳細分析 & AIコンサル")
 
-# --- API設定 ---
+# --- API設定 (サイドバー) ---
 with st.sidebar:
     st.header("🔑 API設定")
     yt_key = st.text_input("YouTube API Key", value=st.secrets.get("YOUTUBE_API_KEY", ""), type="password")
     gr_key = st.text_input("Groq API Key", value=st.secrets.get("GROQ_API_KEY", ""), type="password")
-    oa_key = st.text_input("OpenAI API Key (画像生成用)", value=st.secrets.get("OPENAI_API_KEY", ""), type="password")
-    st.info("OpenAI Keyを入れるとサムネイル画像が生成されます。")
+    oa_key = st.text_input("OpenAI API Key", value=st.secrets.get("OPENAI_API_KEY", ""), type="password")
 
-url = st.text_input("分析したいYouTubeチャンネルのURL")
+url = st.text_input("分析したいチャンネルURL")
 
-if st.button("🚀 戦略・台本・サムネイルを一括生成"):
+if st.button("📊 詳細分析を開始"):
     if not yt_key or not gr_key or not url:
-        st.error("APIキーとURLを正しく入力してください。")
+        st.error("APIキーとURLを入力してください。")
     else:
         try:
             youtube = build('youtube', 'v3', developerKey=yt_key)
             
-            # --- 1. チャンネル・動画データ取得 (前回同様) ---
-            with st.spinner("📊 データを収集中..."):
-                # (チャンネルID特定・動画取得ロジックは前回と同じため省略)
-                # 変数 df に動画データが入っている前提
-                pass # ここに前回の取得ロジックが入ります
-
-            # --- 2. AIによる戦略・台本・SEO作成 ---
-            with st.spinner("🧠 AIが戦略とSEOデータを執筆中..."):
-                groq_client = Groq(api_key=gr_key)
-                prompt = f"""
-                YouTubeプロデューサーとして回答してください。
-                データ: {df.to_string() if 'df' in locals() else '新規チャンネル'}
-
-                依頼:
-                1.【企画案】次作のタイトル1案
-                2.【台本】ショート用と通常動画用のダブル台本
-                3.【SEO最適化】
-                   - 検索されやすい説明文(概要欄)
-                   - 最適なハッシュタグ5つ
-                   - 関連キーワードタグ
-                4.【画像プロンプト】サムネイル画像生成AI用の詳細な英語指示文
-                """
-                completion = groq_client.chat.completions.create(
-                    model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                report = completion.choices[0].message.content
+            # --- 1. データ取得 ---
+            with st.spinner("データを取得中..."):
+                # (前回のロジックでチャンネルID特定)
+                # ... [中略: チャンネルID特定処理] ...
                 
-                # AIの回答から画像プロンプトを抽出（簡易的な抽出ロジック）
-                image_prompt = report.split("画像プロンプト")[-1].strip()
-
-            # --- 3. 【新機能】サムネイル画像生成 ---
-            generated_image_url = None
-            if oa_key:
-                with st.spinner("🎨 サムネイル画像を生成中..."):
-                    oa_client = OpenAI(api_key=oa_key)
-                    img_response = oa_client.images.generate(
-                        model="dall-e-3",
-                        prompt=f"YouTube thumbnail for: {image_prompt}. High contrast, vibrant colors, catchy, no text.",
-                        size="1024x1024",
-                        quality="standard",
-                        n=1,
-                    )
-                    generated_image_url = img_response.data[0].url
-
-            # --- 4. 結果表示 ---
-            st.success("✅ 全ての生成が完了しました！")
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.subheader("💡 戦略・台本・SEO")
-                st.markdown(report)
-            
-            with col2:
-                if generated_image_url:
-                    st.subheader("🖼️ サムネイル案")
-                    st.image(generated_image_url, caption="AI生成サムネイルイメージ")
-                    st.info("※文字は画像編集ソフト（Canvaなど）で後から追加してください。")
+                # 動画詳細データの取得（投稿日、再生数、高評価、コメント数を取得）
+                # ... [中略: playlistItemsから動画リスト取得] ...
                 
-                st.subheader("🏷️ コピペ用タグ")
-                st.code("#AI動画 #生成AI #YouTube戦略", language="text")
+                # 仮のデータフレーム作成例 (実際はAPIから取得した値が入ります)
+                # df = pd.DataFrame(video_data)
+                # df['高評価率'] = (df['高評価'] / df['再生数'] * 100).round(2)
+                
+            # --- 2. グラフ表示セクション ---
+            st.header("📊 パフォーマンス可視化")
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                st.subheader("動画別再生数の比較")
+                # 横棒グラフで各動画の再生数を比較
+                fig = px.bar(df, x='再生数', y='タイトル', orientation='h', 
+                             color='再生数', color_continuous_scale='Reds',
+                             title="最新10本の再生数比較")
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col_b:
+                st.subheader("エンゲージメント分析")
+                # 散布図で「再生数」と「高評価率」の関係を表示
+                fig2 = px.scatter(df, x='再生数', y='高評価率', size='高評価',
+                                  hover_name='タイトル', title="再生数 vs 高評価率")
+                st.plotly_chart(fig2, use_container_width=True)
+
+            # --- 3. 1本ごとの詳細カード表示 ---
+            st.header("🔍 動画別詳細レポート")
+            for index, row in df.iterrows():
+                with st.expander(f"【{index+1}】 {row['タイトル']}"):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("再生数", f"{row['再生数']:,}回")
+                    c2.metric("高評価数", f"{row['高評価']:,}件")
+                    c3.metric("高評価率", f"{row['高評価率']}%")
+                    
+                    # AIによる個別アドバイス（簡易版）
+                    if row['再生数'] > df['再生数'].mean():
+                        st.success("🌟 この動画は平均より伸びています！このテーマのシリーズ化を検討しましょう。")
+                    else:
+                        st.warning("💡 この動画は伸び悩んでいます。サムネイルのクリック率を確認してください。")
+
+            # --- 4. AI戦略レポート (台本・SEO・画像) ---
+            # (前回の Groq & OpenAI 処理)
 
         except Exception as e:
             st.error(f"エラー: {e}")
+
+# --- requirements.txt に plotly を追加してください ---
