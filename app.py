@@ -3,39 +3,27 @@ import pandas as pd
 from googleapiclient.discovery import build
 from groq import Groq
 
-# 1. ページの設定
-st.set_page_config(page_title="AI動画コンサルタント", layout="wide", page_icon="🤖")
+# --- ページ設定 ---
+st.set_page_config(page_title="AI動画 究極コンサル", layout="wide", page_icon="🔥")
+st.title("🔥 AI動画 YouTube究極コンサルタント")
+st.markdown("自分のURLを入れるだけで、**競合を自動リサーチし、ショートと通常動画の両方の台本**を作成します。")
 
-# --- タイトル・説明 ---
-st.title("🤖 AI動画 YouTubeコンサルタント")
-st.markdown("チャンネルURLを入力するだけで、最新データに基づいた戦略をAIが提案します。")
-
-# --- サイドバー (API設定) ---
+# --- API設定 (Secretsまたはサイドバー) ---
 with st.sidebar:
     st.header("🔑 API設定")
-    # Streamlit CloudのSecretsから取得するか、直接入力
-    yt_key = st.text_input("YouTube API Key", 
-                           value=st.secrets.get("YOUTUBE_API_KEY", ""), 
-                           type="password")
-    gr_key = st.text_input("Groq API Key", 
-                           value=st.secrets.get("GROQ_API_KEY", ""), 
-                           type="password")
-    st.info("APIキーを保存したい場合は、Streamlit CloudのSettings > Secretsに設定してください。")
+    yt_key = st.text_input("YouTube API Key", value=st.secrets.get("YOUTUBE_API_KEY", ""), type="password")
+    gr_key = st.text_input("Groq API Key", value=st.secrets.get("GROQ_API_KEY", ""), type="password")
 
-# --- メイン入力エリア ---
 url = st.text_input("分析したいYouTubeチャンネルのURL", placeholder="https://www.youtube.com/@handle")
 
-if st.button("AI戦略を生成する"):
-    if not yt_key or not gr_key:
-        st.error("APIキーが設定されていません。サイドバーから入力してください。")
-    elif not url:
-        st.warning("チャンネルURLを入力してください。")
+if st.button("🚀 競合比較 ＆ 両方の台本を生成"):
+    if not yt_key or not gr_key or not url:
+        st.error("APIキーとURLを正しく入力してください。")
     else:
         try:
-            # YouTube API サービスの構築
             youtube = build('youtube', 'v3', developerKey=yt_key)
             
-            # 1. チャンネルIDの特定
+            # 1. チャンネルID特定
             with st.spinner("🔍 チャンネルを特定中..."):
                 c_id = None
                 if "/channel/" in url:
@@ -43,71 +31,87 @@ if st.button("AI戦略を生成する"):
                 elif "/@" in url:
                     handle = url.split("/@")[1].split("?")[0].split("/")[0]
                     res = youtube.search().list(q=f"@{handle}", type="channel", part="snippet", maxResults=1).execute()
-                    if res.get('items'):
-                        c_id = res['items'][0]['snippet']['channelId']
+                    if res.get('items'): c_id = res['items'][0]['snippet']['channelId']
             
             if not c_id:
-                st.error("チャンネルが見つかりませんでした。URLが正しいか確認してください。")
+                st.error("チャンネルが見つかりませんでした。")
             else:
-                # 2. 動画データの取得
-                with st.spinner("📊 最新の動画データを取得中..."):
-                    ch_res = youtube.channels().list(id=c_id, part='contentDetails').execute()
+                # 2. 自チャンネルデータ取得
+                with st.spinner("📊 自チャンネルのデータを取得中..."):
+                    ch_res = youtube.channels().list(id=c_id, part='snippet,contentDetails').execute()
+                    ch_title = ch_res['items'][0]['snippet']['title']
                     playlist_id = ch_res['items'][0]['contentDetails']['relatedPlaylists']['uploads']
-                    
                     pl_res = youtube.playlistItems().list(playlistId=playlist_id, part='snippet', maxResults=10).execute()
                     
-                    video_data = []
+                    v_data = []
                     for item in pl_res['items']:
                         v_id = item['snippet']['resourceId']['videoId']
                         v_res = youtube.videos().list(id=v_id, part='snippet,statistics').execute()['items'][0]
-                        
-                        video_data.append({
+                        v_data.append({
                             'タイトル': v_res['snippet']['title'],
                             '再生数': int(v_res['statistics'].get('viewCount', 0)),
-                            '高評価': int(v_res['statistics'].get('likeCount', 0)),
-                            '投稿日': v_res['snippet']['publishedAt'][:10]
+                            'タグ': ",".join(v_res['snippet'].get('tags', []))
                         })
-                    df = pd.DataFrame(video_data)
+                    df = pd.DataFrame(v_data)
 
-                # 3. Groq AI による分析
-                with st.spinner("🧠 AIコンサルタントが戦略を立案中..."):
-                    groq_client = Groq(api_key=gr_key)
-                    summary = df.to_string(index=False)
+                # 3. 【新機能】競合チャンネルを自動特定してリサーチ
+                with st.spinner("🛰️ 競合チャンネルを自動リサーチ中..."):
+                    # 自チャンネルの最新タイトルをキーワードに競合検索
+                    keyword = df['タイトル'].iloc[0][:15]
+                    search_res = youtube.search().list(q=keyword, type="channel", part="snippet", maxResults=2).execute()
                     
+                    comp_info = []
+                    for item in search_res.get('items', []):
+                        cid = item['snippet']['channelId']
+                        cname = item['snippet']['title']
+                        # 競合のトップ動画を1本
+                        top_v = youtube.search().list(channelId=cid, part='snippet', order='viewCount', maxResults=1).execute()
+                        if top_v['items']:
+                            v_title = top_v['items'][0]['snippet']['title']
+                            comp_info.append(f"競合名: {cname} (代表作: {v_title})")
+
+                # 4. AIによる戦略立案 & 台本生成
+                with st.spinner("🧠 AIが最強の戦略と台本を執筆中..."):
+                    groq_client = Groq(api_key=gr_key)
                     prompt = f"""
-                    あなたはYouTubeチャンネル「AI動画生成場」の戦略コンサルタントです。
-                    以下のデータに基づき、プロフェッショナルな回答をしてください。
+                    あなたはYouTube登録者100万人の現役プロデューサーです。
+                    
+                    ### データ
+                    - 分析対象: {ch_title}
+                    - 最新動画データ: {df.to_string()}
+                    - リサーチされた競合: {", ".join(comp_info)}
 
-                    ### チャンネルデータ（最新10本）
-                    {summary}
-
-                    ### 依頼内容
-                    1. ヒット傾向の分析（どの動画がなぜ伸びているか）
-                    2. 次に作るべき「AI動画」のタイトル案を3つ
-                    3. 各案に対して「ショート」か「通常動画」かの推奨とその理由
-                    4. 各案の「爆速テロップ案（ショート）」または「高CTRサムネイル文字案（通常）」
-                    5. 映像生成AI（Luma/Runway等）で使える英語プロンプト
+                    ### 依頼
+                    1. 【競合比較分析】: 競合に勝てるポイントを3点。
+                    2. 【爆伸び企画案】: 次に作るべき企画のタイトル案。
+                    3. 【台本A：ショート動画(60秒)】: 
+                       - 視聴維持率を下げない爆速展開の台本。
+                       - ナレーション内容、テロップ、AI映像への指示をセットで。
+                    4. 【台本B：通常動画(8分程度)】: 
+                       - 導入(フック)・本編(深掘り)・結末の構成。
+                       - 視聴者が「最後まで見てしまう」仕掛けを含めた詳細なプロット。
+                    5. 【映像生成用プロンプト】: どちらでも使える英語プロンプト。
                     """
                     
                     completion = groq_client.chat.completions.create(
                         model="llama-3.3-70b-versatile",
-                        messages=[
-                            {"role": "system", "content": "あなたはYouTube分析のプロフェッショナルです。日本語で親切かつ具体的に回答してください。"},
-                            {"role": "user", "content": prompt}
-                        ],
+                        messages=[{"role": "system", "content": "プロのYouTubeディレクターとして、具体的で即戦力になる回答を日本語で作成してください。"},
+                                  {"role": "user", "content": prompt}],
                         temperature=0.7
                     )
                     report = completion.choices[0].message.content
 
-                # 4. 結果表示
-                st.success("✅ 分析が完了しました！")
+                # 5. 結果表示
+                st.success("✅ 全ての戦略と台本が完成しました！")
                 
-                # レポートをタブで表示
-                tab1, tab2 = st.tabs(["💡 戦略レポート", "📊 生データ"])
+                tab1, tab2, tab3 = st.tabs(["🚀 戦略 & 台本レポート", "🔍 比較データ", "📈 自データ"])
                 with tab1:
                     st.markdown(report)
                 with tab2:
-                    st.dataframe(df, use_container_width=True)
+                    st.subheader("自動特定された競合")
+                    for c in comp_info: st.write(f"- {c}")
+                with tab3:
+                    st.dataframe(df)
 
         except Exception as e:
-            st.error(f"❌ エラーが発生しました: {str(e)}")
+            st.error(f"エラー: {e}")
