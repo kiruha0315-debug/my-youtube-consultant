@@ -5,12 +5,12 @@ from googleapiclient.discovery import build
 from groq import Groq
 import requests
 import io
-import time  # リトライ待機用に追加
+import time
 from PIL import Image
 
 # --- 1. ページ設定 ---
 st.set_page_config(page_title="YouTube AI Command Center", layout="wide", page_icon="🛸")
-st.title("🛸 YouTube AI 運営司令塔 (完全無料版)")
+st.title("🛸 YouTube AI 運営司令塔 (FLUXモデル版)")
 
 # --- 2. API設定 (サイドバー) ---
 with st.sidebar:
@@ -20,21 +20,21 @@ with st.sidebar:
     hf_key = st.text_input("Hugging Face Token", value=st.secrets.get("HF_TOKEN", ""), type="password")
     st.info("※APIキーはStreamlitのSecretsに保存しておくと便利です。")
 
-# --- 3. 【修正版】画像生成関数 (Hugging Face API / リトライ機能付) ---
+# --- 3. 画像生成関数 (FLUX.1-schnell モデル) ---
 def generate_image(prompt, token):
-    API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
+    # 最新の高速モデル FLUX.1-schnell を使用
+    API_URL = "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-schnell"
     headers = {"Authorization": f"Bearer {token}"}
     
-    # モデルの起動に時間がかかる場合があるため、最大3回リトライ
     for i in range(3):
         try:
             response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
             
             if response.status_code == 200:
                 return response.content
-            elif response.status_code == 503:
-                # モデルが読み込み中の場合は20秒待機してリトライ
-                st.warning(f"🎨 AI画像生成モデルを起動中... ({i+1}/3回目: 約20秒待ちます)")
+            elif response.status_code == 503 or response.status_code == 429:
+                # 読み込み中(503)やリクエスト過多(429)の場合は20秒待機
+                st.warning(f"🎨 AI画像生成モデルを準備中... ({i+1}/3回目: 20秒待機)")
                 time.sleep(20)
                 continue
             else:
@@ -45,15 +45,14 @@ def generate_image(prompt, token):
             return None
     return None
 
-# --- 4. メイン入力エリア ---
+# --- 4. メインエリア ---
 url = st.text_input("分析したいチャンネルURL", placeholder="https://www.youtube.com/@handle")
 
 if st.button("🛰️ 全機能を一括起動"):
     if not yt_key or not gr_key or not hf_key or not url:
-        st.error("全てのAPIキー（YouTube, Groq, HuggingFace）とURLを入力してください。")
+        st.error("全てのAPIキーを入力してください。")
     else:
         try:
-            # 各クライアント初期化
             youtube = build('youtube', 'v3', developerKey=yt_key)
             groq_client = Groq(api_key=gr_key)
 
@@ -72,7 +71,6 @@ if st.button("🛰️ 全機能を一括起動"):
                     st.error("チャンネルが見つかりませんでした。")
                     st.stop()
 
-                # 最新動画データの取得
                 ch_res = youtube.channels().list(id=c_id, part='snippet,contentDetails').execute()
                 ch_title = ch_res['items'][0]['snippet']['title']
                 playlist_id = ch_res['items'][0]['contentDetails']['relatedPlaylists']['uploads']
@@ -95,75 +93,44 @@ if st.button("🛰️ 全機能を一括起動"):
                         '投稿日': v_res['snippet']['publishedAt'][:10]
                     })
                 df = pd.DataFrame(video_data)
-                v_id = v_ids[0] # 最新動画ID
+                v_id = v_ids[0]
 
-            # --- 2. 競合リサーチ ---
-            with st.spinner("🛰️ 競合情報を収集中..."):
-                keyword = df['タイトル'].iloc[0][:15]
-                search_res = youtube.search().list(q=keyword, type="channel", part="snippet", maxResults=2).execute()
-                comp_info = [f"{item['snippet']['title']}" for item in search_res.get('items', [])]
-
-            # --- 3. コメント分析 (Groq) ---
-            with st.spinner("💬 視聴者の本音を分析中..."):
+            # --- 2. 競合・コメント・分析 ---
+            with st.spinner("🧠 戦略を分析中..."):
+                # コメント取得
                 try:
                     c_res = youtube.commentThreads().list(videoId=v_id, part='snippet', maxResults=20).execute()
                     all_comments = "\n".join([i['snippet']['topLevelComment']['snippet']['textDisplay'] for i in c_res['items']])
                 except:
-                    all_comments = "コメントが無効か、取得できませんでした。"
+                    all_comments = "コメント取得不可"
 
-            # --- 4. サムネイル生成 (Hugging Face) ---
-            with st.spinner("🎨 AIサムネイル案を生成中..."):
-                img_prompt = f"Professional YouTube thumbnail, eye-catching, high resolution, about {df['タイトル'].iloc[0]}"
-                image_bytes = generate_image(img_prompt, hf_key)
-
-            # --- 5. AI戦略レポート生成 (Groq) ---
-            with st.spinner("🧠 AIプロデューサーが執筆中..."):
-                prompt = f"""
-                あなたはYouTubeプロデューサーです。
-                【自社データ】\n{df.to_string()}\n
-                【競合】\n{", ".join(comp_info)}\n
-                【視聴者コメント】\n{all_comments}
-
-                依頼：
-                1. 競合比較とヒット分析
-                2. 次作の「ショート」と「長尺」のダブル台本
-                3. SEOタグ・ハッシュタグ
-                4. トレンド予測キーワード
-                """
+                # Groqによる分析
+                prompt = f"YouTube分析と戦略提案をして：\nデータ：{df.to_string()}\nコメント：{all_comments}"
                 completion = groq_client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[{"role": "user", "content": prompt}]
                 )
                 report = completion.choices[0].message.content
 
-            # --- 6. 結果表示 ---
-            st.success(f"✅ {ch_title} の分析が完了しました！")
-            
-            t1, t2, t3, t4 = st.tabs(["🚀 戦略・台本", "📊 グラフ分析", "🖼️ サムネイル案", "🔍 詳細データ"])
+            # --- 3. 画像生成 ---
+            with st.spinner("🎨 サムネイルを生成中..."):
+                img_prompt = f"High-quality YouTube thumbnail for: {df['タイトル'].iloc[0]}"
+                image_bytes = generate_image(img_prompt, hf_key)
+
+            # --- 4. 結果表示 ---
+            st.success(f"✅ {ch_title} の分析完了")
+            t1, t2, t3 = st.tabs(["🚀 戦略レポート", "📊 グラフ", "🖼️ サムネイル案"])
             
             with t1:
                 st.markdown(report)
-            
             with t2:
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    fig = px.bar(df, x='再生数', y='タイトル', orientation='h', color='再生数', color_continuous_scale='Reds')
-                    st.plotly_chart(fig, use_container_width=True)
-                with col_b:
-                    fig2 = px.scatter(df, x='再生数', y='高評価率', size='高評価', hover_name='タイトル')
-                    st.plotly_chart(fig2, use_container_width=True)
-            
+                fig = px.bar(df, x='再生数', y='タイトル', orientation='h', color='再生数')
+                st.plotly_chart(fig, use_container_width=True)
             with t3:
                 if image_bytes:
-                    try:
-                        st.image(Image.open(io.BytesIO(image_bytes)), caption="AI生成サムネイル案")
-                    except:
-                        st.error("データの読み込みに失敗しました。もう一度実行してみてください。")
+                    st.image(Image.open(io.BytesIO(image_bytes)))
                 else:
-                    st.warning("画像の生成に時間がかかっています。しばらく待ってから再度「一括起動」を押してください。")
-
-            with t4:
-                st.dataframe(df)
+                    st.warning("画像生成に失敗しました。時間をおいて再試行してください。")
 
         except Exception as e:
-            st.error(f"エラーが発生しました: {e}")
+            st.error(f"エラー: {e}")
